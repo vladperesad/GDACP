@@ -5,12 +5,12 @@ library(ggcorrplot)
 library(lubridate)
 
 #Set up a working directory
-setwd("C:/Users/holle/Documents/DataAnalysis/Project_1/Fitabase Data 4.12.16-5.12.16")
+setwd("C:/vladperesad/GDACP")
 
 
 
 #DataFrames----
-daily_activity_merged <- read.csv("dailyActivity_merged.csv")
+daily_activity_merged <- read.csv("datasets/dailyActivity_merged.csv")
 
 #Exploring the structure of the dataset and shaping it appropriately----
 
