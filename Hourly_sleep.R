@@ -4,10 +4,10 @@ library(lubridate)
 library(skimr)
 
 #Set up a working directory
-setwd("C:/Users/holle/Documents/DataAnalysis/Project_1/Fitabase Data 4.12.16-5.12.16")
+setwd("C:/vladperesad/GDACP")
 
 #import dataset----
-minute_sleep_merged <- read.csv("minuteSleep_merged.csv")
+minute_sleep_merged <- read.csv("datasets/minuteSleep_merged.csv")
 
 
 #exploring the dataset-----
