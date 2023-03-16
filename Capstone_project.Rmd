@@ -1,0 +1,459 @@
+---
+title: "Google Data Analytics Capstone Project"
+author: "Peresadin Vladimir"
+date: "2023-03-07"
+output: html_document
+---
+#
+#### **Quick summary**
+#
+##### **Conclusions**
+
+In this capstone project I carried out exploratory data analysis on FitBit Fitness Tracker Data, in particular  on datasets of users' daily activities and sleep tracking data. Using these datasets I was able to find out which days users work out the most (and the least) which may be used as an indicator of their business or motivation level and help company such as Bellabeat choose timing for their promotions and special deals. I also found that participants consider running and jogging as the most effective exercise to burn calories, more importantly that they prefer to exercise outside rather than go to a gym. Finally I detected a strong correlation between the time users go to bed and the quality of sleep they tend to have, this detail can be potentially used to address sleep disorders and improve overall quality of sleep.
+
+#
+##### **Challenges**
+
+  In order to plot bedtimes starting at 20:00 and ending at 08:00 I needed to offset the time and substitute the date with the same value for all rows, I am sure there is a better way to do this, but I could not find any, and had to figure it out myself. Also upon my acquaintance with the datasets I noticed a significant difference in the number of participants monitoring their daily activities, heart rate and sleep. I tried to find evidence that the last two features consume a lot of energy and users prefer not to use them in order to improve the battery life, however I was not able to find the difference in on the wrist and off the wrist (charging) times between groups that do and do not use  these features to prove my point. The availability of such data could help reveal differences in the use of devices among different groups of people which in turn can help target and serve users better. 
+
+#
+#### **Datasets**
+
+After examining the availible data, I decided to use 2 datasets for my analysis `dailyActivity_merged.csv` and `minuteSleep_merged.csv` The contents of them are following:
+
+* **Id** - Identification number of the user
+* **ActivityDate** - Date of the record
+* **TotalSteps** - Sum of steps taken during the day
+* **TotalDistance** - Distance in kilometers tracked by GPS during the day
+* **TrackerDistance** - Distance in kilometers calculated by the device using steps as an input during the day *
+* **LoggedActivitiesDistance** - Distance in kilometers from logged activities during the day
+* **VeryActiveDistance** - Distance in kilometers covered during highly intensive load during the day
+* **ModeratelyActiveDistance** - Distance in kilometers covered during moderately intensive load during the day
+* **LightlyActiveDistance** - Distance in kilometers covered during light exercise during the day
+* **SedentaryActiveDistance** - Distance in kilometers covered while sitting during the day
+* **VeryActiveMinutes** - Amount of time in minutes spent doing high intensity exercises during the day
+* **FairlyActiveMinutes** _ Time in minutes spent in moderately intensive exercises during the day
+* **LightlyActiveMinutes** - Time in minutes spent in lightly active exercises during the day
+* **SedentaryMinutes** - Time in minutes spent sitting during the day
+* **Calories** - Amount of calories burnt during the day
+* **logId** - Identification number of sleep record
+* **date** - Date and time for every minute of given sleep record
+* **value** - Value indicating the sleep state (1 - asleep, 2 - restless, 3 - awake)
+
+###### Since there is not much explanation given to differences between TotalDistance and TrackedDistance, based on my knowledge of how these devices work, I am going to assume that TotalDistance is gained using GPS system either built in the device itself or used one in user's phone and TrackerDistance is calculated based on user's height and number of steps taken. 
+
+#
+
+The [metadata file](https://www.fitabase.com/media/1930/fitabasedatadictionary102320.pdf) was kindly supplied by [Laimis Andrijauskas](https://www.kaggle.com/laimisandrijauskas) 
+
+#
+
+#### **Setting up the working environment**
+#
+Load up the necessary libraries:
+```{r}
+library(tidyverse)
+library(lubridate)
+library(scales)
+library(skimr)
+library(ggcorrplot)
+```
+#
+Set up the working directory and load the data:
+```{r}
+setwd("C:/vladperesad")
+daily_activity_merged <- read.csv("datasets/dailyActivity_merged.csv")
+minute_sleep_merged <- read.csv("datasets/minuteSleep_merged.csv")
+```
+
+#
+
+#### **Data preparation**
+#
+Check the dataset for duplicates and look at its structure:
+```{r}
+anyDuplicated(daily_activity_merged)
+
+str(daily_activity_merged) 
+```
+
+###### *A few things that need to be fixed emerge immediately:*
+###### *- values in column `Id` are numerical*
+###### *- dates in column `ActivityDate` are character moreover the format MM/DD/YYYY is not standard*
+
+#
+```{r}
+daily_activity_merged$Id <- as.factor(daily_activity_merged$Id)
+
+daily_activity_merged <- daily_activity_merged %>% 
+  mutate(Date = strptime(ActivityDate, "%m/%d/%Y")) %>% 
+  select(!(ActivityDate))
+
+daily_activity_merged$Date <- as.Date(daily_activity_merged$Date)
+
+```
+
+#
+
+Now that the format is more appropriate I can start taking a closer look on the data at hand
+
+#
+
+Count the number of unique ids (participants):
+
+```{r}
+length(unique(daily_activity_merged$Id))
+```
+
+#
+
+Add another column that has a count of days each user submitted data and get rid of records that count less than 7 days (1 week):
+
+```{r}
+daily_activity_merged <- daily_activity_merged %>%
+  group_by(Id) %>% 
+  mutate(Count = length(Id)) %>%
+  filter(Count > 7) %>% 
+  select(Id,
+         Count,
+         Date,
+         everything()) %>% 
+  ungroup()
+```
+#
+
+Run the summary function to check if the values in columns make sense and aren't out of range:
+```{r}
+summary(daily_activity_merged)
+```
+
+###### *- minimum number of steps taken is zero which is hardly possible as well as zero distance traveled*
+###### *- columns `LoggedActivitiesDistance` and `SedentaryActiveDistance`seem to have many zero values, besides I don't see how they can be used in the analysis so I might as well get rid of them altogether*
+
+#
+
+```{r}
+daily_activity_merged <- daily_activity_merged %>% 
+  filter(TotalSteps >0 &
+           TrackerDistance >0 &
+           TotalDistance >0) %>%
+  select(!(c(LoggedActivitiesDistance,
+             SedentaryActiveDistance)))
+```
+
+#
+Use `skim` function from `skimr` to see how the data is distributed also paying attention to columns "n_missing" and "complete_rate"
+
+#
+```{r}
+skimr::skim(daily_activity_merged)
+```
+#
+
+#### **Exploratory data analysis**
+
+#
+
+For further analysis the column that reflects number of the day of the week is needed. It can be derived from the dates in the `Date` column by means of the `lubridate` package:
+```{r}
+daily_activity_merged$DayOfWeek = ifelse(wday(daily_activity_merged$Date)== 1,7, wday(daily_activity_merged$Date)-1)
+```
+#
+
+Let's take a look at the amount of time people spend on each activity. In order to do that, the original "wide" data has to be turned into a "long" one using `gather` function:
+
+```{r}
+DAM_mins_long <- daily_activity_merged %>% 
+  select(Date,
+         DayOfWeek,
+         VeryActiveMinutes,
+         FairlyActiveMinutes,
+         LightlyActiveMinutes,
+         SedentaryMinutes ) %>% 
+  gather(key = IntensityLevel, value = Minutes, c(3:6)) 
+```
+#
+
+And now the barchart can be plotted:
+```{r}
+(barplot_act <-ggplot(DAM_mins_long, aes(x = reorder(IntensityLevel, desc(Minutes)), y = Minutes, fill = IntensityLevel))+
+    geom_bar(stat = "identity")+
+    scale_x_discrete(labels = c("SedentaryMinutes"="Sedentary",
+                                "LightlyActiveMinutes" = "Lightly active",
+                                "VeryActiveMinutes" = "Very Active",
+                                  "FairlyActiveMinutes" = "Fairly Active"))+
+   scale_y_continuous(labels = label_comma())+
+   scale_fill_manual(values = c("#CDC0B0",
+                                "#EEC900",
+                                "#104E8B",
+                                "#fe7f2d"))+
+    theme_minimal()+
+    theme(legend.position = "none")+
+    labs(title = "Most and least popular activities",
+         subtitle = "How much time users spend performing each activity",
+         x = ""))
+```
+
+###### *Turns out most of their time people spend sitting, moreover they spend more minutes sitting than performing all other activities put together.*
+
+#
+
+As a next step let's can create a correlation matrix to see if there is any strong relationships between values. But first non-numerical values must be removed:
+```{r}
+corr_mat <- daily_activity_merged %>% 
+  select(!c(Id, Date))
+
+corr_mat <- round(cor(corr_mat),1)
+
+(corr_plot <- ggcorrplot(cor(corr_mat),
+                         hc.order = TRUE,
+                         type = "lower",
+                         lab = TRUE,
+                         lab_size = 2.8,
+                         colors = c("#104E8B",
+                                    "white",
+                                    "#fe7f2d"))+
+    theme_minimal()+
+    labs(x = "",
+         y = "")+
+    theme(legend.position = "none",
+          axis.text.x = element_text(angle = 45,
+                                     hjust = 1)))
+```
+
+###### *Such strong correlation between `LightlyActiveMinutes` and `LightActiveDistance` is explained by the fact that these values are calculated based on one another, this is also the case with `FairlyActiveMinutes` and `ModeratelyActiveDistance` as well as with `VeryActiveMinutes` and `VeryActiveDistance.`*
+
+#
+
+Let's look deeper into the relationship between steps and calories
+```{r}
+(steps_cal <- ggplot(daily_activity_merged, aes(x = TotalSteps, y = Calories))+
+    geom_point()+
+    stat_smooth(formula = 'y ~ x',
+                method = "lm",
+                color = "#fe7f2d")+
+    theme_minimal()+
+    labs(title = "Steps vs. calories",
+        subtitle = "Correlation between number of steps taken and amount of calories burned",
+        x = "Steps"))
+```
+
+###### *The correlation between number of steps and calories burnt is obvious. What the plot tells us, however is that a lot of people associate high intensity activities with exercises that involve taking steps, in particular jogging or running.*
+
+#
+```{r}
+(steps_dist <-ggplot(daily_activity_merged, aes(x = TotalSteps, y =TotalDistance))+
+    geom_point()+
+    stat_smooth(formula = 'y ~ x',
+                method = "lm",
+                color = "#fe7f2d")+
+    theme_minimal()+
+    labs(title = "Steps vs. Distance (km)",
+         subtitle = "Steps counted by pedometer and distance covered according to GPS tracker",
+         x = "Steps",
+         y = "Distance (km)"))
+```
+
+###### *Even stronger correlation is observed when steps are plotted against distance tracked by the GPS. That itself tells us that most of the users of the device prefer taking a jog or run outside as opposed to using the treadmill or elliptical in the gym.*
+
+#
+
+It would be interesting to see how participants' motivation changes through the course of the week. To show this let's calculate the average amount of calories burnt per each day of the week in regards to overall average amount of calories:
+```{r}
+cal_mean <- mean(daily_activity_merged$Calories)
+cal_by_day <- daily_activity_merged %>% 
+  group_by(DayOfWeek) %>% 
+  summarize(CaloriesMean = mean(Calories),
+            RelativeVal = 100*(mean(Calories)-cal_mean)/cal_mean)
+```
+#
+```{r}
+(cal_by_day_plot <- ggplot(cal_by_day, aes(x = as.factor(DayOfWeek), y = RelativeVal, fill = RelativeVal))+
+    geom_bar(stat = "identity")+
+    scale_x_discrete(labels = c("Monday",
+                                "Tuesday",
+                                "Wednesday",
+                                "Thursday",
+                                "Friday",
+                                "Saturday",
+                                "Sunday"))+
+    theme_minimal()+
+    labs(title = "Relative calories burnt by day of week",
+         x = "",
+         y = "Relative calories (%)")+
+  theme(legend.position = "none"))
+```
+
+###### *There is a clear droop of the average amount of calories burnt over the middle of the week (Wednesday to Friday), Sunday tends to be a day to relax as well. Participants feel the most motivated or less busy and hence work out more on Tuesdays and Saturdays.*
+
+#
+
+Now let's take a look at another dataset that contains information about users' sleeping routines to see if it needs cleaning, reformatting or structuring:
+
+```{r}
+str(minute_sleep_merged)
+```
+
+###### *Similar things are found in this dataset:*
+###### *- values in columns `Id` and `logId` are numerical and not factorial*
+###### *- date and time are in inappropriate formats*
+
+#
+Before starting to reshape the dataset, let's remove duplicates if they're present
+```{r}
+length(minute_sleep_merged$Id)
+
+minute_sleep_merged <- distinct(minute_sleep_merged)
+
+length(minute_sleep_merged$Id)
+```
+
+###### *There were 543 rows of duplicated values*
+#
+
+For further analysis I need to bring the dataset into appropriate shape, which in this case means setting columns into proper format as well as filtering out records made between 8:00 and 20:00 as I am not interested in records of naps:
+```{r}
+minute_sleep_merged <- minute_sleep_merged %>% 
+  mutate(DateNew = strptime(date, "%m/%d/%Y %I:%M:%S %p")) %>% 
+  tidyr::separate(DateNew, c("Date", "Time"), sep = " ", remove = FALSE) %>%  
+  filter(Time >= "20:00:00" | Time <= "08:00:00") %>% 
+  select(Id, LogId = logId, DateTime = DateNew, Value = value)
+
+minute_sleep_merged$Id <- as.factor(minute_sleep_merged$Id)
+minute_sleep_merged$LogId <- as.factor(minute_sleep_merged$LogId)
+minute_sleep_merged$DateTime <- as.POSIXct(minute_sleep_merged$DateTime)
+
+str(minute_sleep_merged)
+```
+#
+```{r}
+skim(minute_sleep_merged)
+```
+
+###### *- there are 23 users who monitored their sleep between 2016-04-11 and 2016-05-12*
+###### *- there are 420 records of sleeps recorded between 8 pm and 8 am*
+###### *- according to the metadata document the sleep can take 3 forms (1 - asleep, 2 - restless, 3 - awake)*
+
+#
+In order to be able to plot the hours starting at 20:00 and ending at 8:00 I need to create a 4 hour offset so that 20:00 and 8:00 become 0:00 and 12:00 respectively. I will create a subset that contains shifted hours, Ids and LogIds:
+```{r}
+MSM_subset <- minute_sleep_merged %>%
+  mutate(ShiftedTime = DateTime+hours(4)) %>% 
+  tidyr::separate(ShiftedTime, c("Date", "SftTime"), sep = " " ) %>% 
+  select(Id, LogId, SftTime)
+```
+#
+Since I am interested in times when each sleep started, only the first record for each LogId has to be taken:
+```{r}
+MSM_subset <- MSM_subset  %>% 
+  group_by(LogId) %>% 
+  slice(1)
+```
+#
+Now that I have starting times of each sleep I can put them together with the main dataset:
+```{r}
+MSM_new <- right_join(minute_sleep_merged, MSM_subset, by = c("LogId", "Id"))
+```
+#
+Now let's calculate average sleep quality for each logged record, in order to be able to manipulate values in column `DateTime` its content has to be exactly that - date and time, since dates themselves do not interest me, I can simply add today as a date part: 
+```{r}
+MSM_new <- MSM_new %>%
+  select(Id, LogId, DateTime, SftTime, Value) %>% 
+  group_by(Id, LogId, SftTime) %>% 
+  summarise(MeanValue = mean(Value)) %>% 
+  mutate(Date = today()) %>%
+  unite("DateTime", 5,3, sep = " ")
+
+MSM_new$DateTime <- as_datetime(MSM_new$DateTime)
+
+tibble(MSM_new)
+```
+#
+Plot the set and see what it shows:
+```{r, warning=FALSE}
+(sleep_quality_vs_time <- ggplot(MSM_new, aes(x =DateTime, y = MeanValue))+
+    geom_point()+
+    geom_smooth(method = 'loess',
+                formula = 'y ~ x',
+                color = "#fe7f2d")+
+    scale_x_datetime(date_breaks = "2 hours",
+                     date_labels = c("21:00",
+                                     "21:00",
+                                     "23:00",
+                                     "01:00",
+                                     "03:00",
+                                     "05:00",
+                                     "07:00"))+
+    scale_y_continuous(limits = c(1, 1.6))+
+    theme_minimal()+
+    labs(title = "Bedtime vs. quality of sleep",
+         x = "",
+         y = "Sleep quality index"))
+```
+
+###### *There is a clear correlation between bedtime and the quality of sleep. I looks like bedtimes between 22:00 and 23:00 coincide with the best sleep quality*
+
+#
+
+#### **Summary of analysis**
+I started this project trying to find patterns and insights analysing the supplied data. The primary question that I tried to answer in this analysis was "What are the trends in use of fitness tracking devices ?". I tried to apply my superficial knowledge of how these smart devices work and how they are used to find typical flaws users have to deal with, and how these flaws can be mitigated if not gotten rid of completely. Seeing quite a significant difference in use of functions such as steps tracking (33 participants), sleep monitoring (24 participants) and heart rate monitoring (14 participants), one of my hypotheses was that this difference exists because of high energy consumption of these functions and users did not enable them to extend battery life. Unfortunately I was not able to find any evidence to support that hypothesis. Such user behaviour is probably better explained by the fact that steps tracking function is enabled by default and latter two functions need to be enabled manually. Knowing that elder people usually have difficulties operating new products, in my opinion having access to users age data as well as how often the fitness tracker and user's phone syncronize would definitely help shed light on this mystery. As for the trends, here are the key observations I made during this analysis:
+
+#
+
+##### 1. People spend much more time sitting, than performing other (light intensity, moderate intensity, high intensity) activities altogether.
+According to the article [Ku, PW., Steptoe, A., Liao, Y. et al. A cut-off of daily sedentary time and all-cause mortality in adults: a meta-regression analysis involving more than 1 million participants. BMC Med 16, 74 (2018). https://doi.org/10.1186/s12916-018-1062-2](https://bmcmedicine.biomedcentral.com/articles/10.1186/s12916-018-1062-2#citeas) there is "a log-linear dose-response association between daily sedentary time and all-cause mortality". In order to lower the risk of all-cause mortality "it may be appropriate to encourage adults to engage in less sedentary behaviors, with fewer than 9 h a day". One of the ways to do that might be some sort of a reminder on device's screen to get up and perform a suggested exercise every 60 minutes.
+
+#
+
+##### 2. The number of steps taken and measured by device's pedometer corellate strongly with the number of calories burnt.
+This correlation tells us that users prefer to perform exercises that involve taking steps, such as walking, jogging or running rather than strength exercises such as lifting weights.
+
+#
+
+##### 3. There is a strong correlation between the distance calculated by the device using number of steps and the user's height as an input and the distance tracked by the GPS.
+This tells us two things, one is that the precision of the calculations performed by the device is up to standard. Another one is that users who jog and run, do it outside as opposed to going to gym and perform those activities on a treadmill or an elliptical machine. It means that the fitness tracking device has to meet  certain conditions when it comes to enclosure protection and device's screen legibility under bright sun and  while running.
+
+#
+
+##### 4.User's performance varies during the week with Tuesday and Saturday being the days with the maximum amount of calories burnt and Thursday and Sunday with the lowest.
+Using this information fitness devices manufacturers can choose better timings for their advertising campaigns and promotions and count on a better response from the audience. 
+
+#
+
+##### 5. Bedtime and its correlation with the quality of sleep shows that the best sleepng quality coincides with the bedtime around 11 pm and gets worse past this time.
+There is no evidence that bedtime causes the sleeping quality to improve or worsen, however the findings in the article [Shahram Nikbakhtian, Angus B Reed, Bernard Dillon Obika, Davide Morelli, Adam C Cunningham, Mert Aral, David Plans, Accelerometer-derived sleep onset timing and cardiovascular disease incidence: a UK Biobank cohort study, European Heart Journal - Digital Health, Volume 2, Issue 4, December 2021, Pages 658–666, https://doi.org/10.1093/ehjdh/ztab088](https://academic.oup.com/ehjdh/article/2/4/658/6423198?login=false) "suggests the possibility of a relationship between sleep onset timing and risk of developing CVD, particularly for women", and "sleep onset timings earlier than 10 pm and later than 11 pm were associated with increased risk of CVD". So it is probably a good idea to notify users of suggested bedtime at around 10 pm providing them with the positive effects of such routine.
+
+#
+
+##### **References**
+
+1. [Accelerometer-derived sleep onset timing and cardiovascular disease incidence: a UK Biobank cohort study | European Heart Journal - Digital Health | Oxford Academic](https://academic.oup.com/ehjdh/article/2/4/658/6423198?login=false)
+
+#
+
+2. [A cut-off of daily sedentary time and all-cause mortality in adults: a meta-regression analysis involving more than 1 million participants | BMC Medicine](https://bmcmedicine.biomedcentral.com/articles/10.1186/s12916-018-1062-2#citeas)
+
+#
+
+3. [Customizing time and date scales in ggplot2 | R-bloggers](https://www.r-bloggers.com/2018/06/customizing-time-and-date-scales-in-ggplot2/)
+
+#
+
+4. [Exploratory Data Analysis with R. Examining the Doctor’s Appointment… | by Will Koehrsen | Medium](https://williamkoehrsen.medium.com/exploratory-data-analysis-with-r-f9d3a4eb6b16)
+
+#
+
+5. [FAQ: Axes • ggplot2](https://ggplot2.tidyverse.org/articles/faq-axes.html)
+
+#
+
+6. [Fitabase Data Dictionary](https://www.fitabase.com/media/1930/fitabasedatadictionary102320.pdf)
+
+#
+
+7. [What is Exploratory Data Analysis? | by Prasad Patil | Towards Data Science](https://towardsdatascience.com/exploratory-data-analysis-8fc1cb20fd15)
+
+#
+
+
+ 
